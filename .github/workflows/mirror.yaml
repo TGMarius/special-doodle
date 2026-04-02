@@ -1,47 +1,47 @@
-name: Mirror Images to GHCR
+- name: Mirror all images from images.txt
+  run: |
+    while IFS= read -r SRC || [ -n "$SRC" ]; do
 
-on:
-  push:
-    paths:
-      - "images.txt"
-  workflow_dispatch:
+      echo "----"
+      echo "RAW LINE: '$SRC'"
 
-jobs:
-  mirror:
-    runs-on: ubuntu-latest
+      # Skip blank or whitespace-only lines
+      CLEANED="$(echo "$SRC" | tr -d '[:space:]')"
+      if [ -z "$CLEANED" ]; then
+        echo "Skipping empty/blank line"
+        continue
+      fi
 
-    permissions:
-      packages: write
-      contents: read
+      # Extract only image name with tag (last path piece)
+      IMAGE_WITH_TAG=$(echo "$SRC" | awk -F/ '{print $NF}')
+      echo "IMAGE_WITH_TAG: '$IMAGE_WITH_TAG'"
 
-    steps:
-      - name: Checkout 
-        uses: actions/checkout@v4
+      # NAME = text before ":" 
+      NAME=$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)
+      echo "NAME: '$NAME'"
 
-      - name: Login to GHCR
-        run: |
-          echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io \
-            -u ${{ github.actor }} --password-stdin
+      # TAG = text after ":" (or latest)
+      if echo "$IMAGE_WITH_TAG" | grep -q ":"; then
+        TAG=$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)
+      else
+        TAG="latest"
+      fi
+      echo "TAG: '$TAG'"
 
-      - name: Mirror all images
-        run: |
-          while read SRC; do
-            [ -z "$SRC" ] && continue
+      # Build destination
+      DEST="ghcr.io/${{ github.repository_owner }}/mirror/${NAME}:${TAG}"
+      echo "DEST: '$DEST'"
 
-            IMAGE_WITH_TAG=$(echo "$SRC" | awk -F/ '{print $NF}')
-            NAME=$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)
-            
-            if echo "$IMAGE_WITH_TAG" | grep -q ":" ; then
-              TAG=$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)
-            else
-              TAG="latest"
-            fi
-            
-            EST="ghcr.io/${{ github.repository_owner }}/mirror/${NAME}:${TAG}"
+      # Validate before pulling
+      if [ -z "$NAME" ] || [ -z "$TAG" ]; then
+        echo "ERROR: NAME or TAG is empty — skipping"
+        continue
+      fi
 
-            echo "Mirroring $SRC → $DEST"
+      echo "Mirroring $SRC → $DEST"
 
-            docker pull "$SRC"
-            docker tag "$SRC" "$DEST"
-            docker push "$DEST"
-          done < images.txt
+      docker pull "$SRC"
+      docker tag "$SRC" "$DEST"
+      docker push "$DEST"
+
+    done < images.txt
