@@ -30,8 +30,13 @@ jobs:
 
             IMAGE_WITH_TAG=$(echo "$SRC" | awk -F/ '{print $NF}')
             NAME=$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)
-            TAG=$(echo "$IMAGE_WITH_TAG" | awk -F: '{print $2}')
-            [ -z "$TAG" ] && TAG="latest"
+            
+            if echo "$IMAGE_WITH_TAG" | grep -q ":" ; then
+              TAG=$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)
+            else
+              TAG="latest"
+            fi
+            
             EST="ghcr.io/${{ github.repository_owner }}/mirror/${NAME}:${TAG}"
 
             echo "Mirroring $SRC → $DEST"
