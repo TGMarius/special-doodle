@@ -1,47 +1,82 @@
-- name: Mirror all images from images.txt
-  run: |
-    while IFS= read -r SRC || [ -n "$SRC" ]; do
+name: Mirror Images to GHCR
 
-      echo "----"
-      echo "RAW LINE: '$SRC'"
+on:
+  push:
+    paths:
+      - "images.txt"
+  workflow_dispatch:
 
-      # Skip blank or whitespace-only lines
-      CLEANED="$(echo "$SRC" | tr -d '[:space:]')"
-      if [ -z "$CLEANED" ]; then
-        echo "Skipping empty/blank line"
-        continue
-      fi
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
 
-      # Extract only image name with tag (last path piece)
-      IMAGE_WITH_TAG=$(echo "$SRC" | awk -F/ '{print $NF}')
-      echo "IMAGE_WITH_TAG: '$IMAGE_WITH_TAG'"
+    permissions:
+      contents: read
+      packages: write
 
-      # NAME = text before ":" 
-      NAME=$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)
-      echo "NAME: '$NAME'"
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      # TAG = text after ":" (or latest)
-      if echo "$IMAGE_WITH_TAG" | grep -q ":"; then
-        TAG=$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)
-      else
-        TAG="latest"
-      fi
-      echo "TAG: '$TAG'"
+    - name: Login to GHCR
+      run: |
+        echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io \
+          -u "${{ github.actor }}" --password-stdin
 
-      # Build destination
-      DEST="ghcr.io/${{ github.repository_owner }}/mirror/${NAME}:${TAG}"
-      echo "DEST: '$DEST'"
+    - name: Mirror all images from images.txt
+      shell: bash
+      run: |
+        echo "Starting mirroring"
+        echo "----"
 
-      # Validate before pulling
-      if [ -z "$NAME" ] || [ -z "$TAG" ]; then
-        echo "ERROR: NAME or TAG is empty — skipping"
-        continue
-      fi
+        while IFS= read -r SRC || [ -n "$SRC" ]; do
 
-      echo "Mirroring $SRC → $DEST"
+          echo "RAW LINE: '$SRC'"
 
-      docker pull "$SRC"
-      docker tag "$SRC" "$DEST"
-      docker push "$DEST"
+          # Skip empty or whitespace-only lines
+          CLEANED="$(echo "$SRC" | tr -d '[:space:]')"
+          if [ -z "$CLEANED" ]; then
+            echo "Skipping blank line"
+            continue
+          fi
 
-    done < images.txt
+          # Extract last segment: "nginx:latest"
+          IMAGE_WITH_TAG=$(echo "$SRC" | awk -F/ '{print $NF}')
+          echo "IMAGE_WITH_TAG: '$IMAGE_WITH_TAG'"
+
+          # Extract NAME (before :)
+          NAME=$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)
+          echo "NAME: '$NAME'"
+
+          # Extract TAG (after :), default to latest
+          if [[ "$IMAGE_WITH_TAG" == *:* ]]; then
+            TAG=$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)
+          else
+            TAG="latest"
+          fi
+          echo "TAG: '$TAG'"
+
+          # Validate name/tag
+          if [ -z "$NAME" ] || [ -z "$TAG" ]; then
+            echo "ERROR: NAME or TAG empty. Skipping."
+            continue
+          fi
+
+          DEST="ghcr.io/${{ github.repository_owner }}/mirror/${NAME}:${TAG}"
+          echo "DEST: '$DEST'"
+
+          echo "Pulling $SRC..."
+          docker pull "$SRC"
+
+          echo "Tagging as $DEST..."
+          docker tag "$SRC" "$DEST"
+
+          echo "Pushing to GHCR..."
+          docker push "$DEST"
+
+          echo "Done processing $SRC"
+          echo "----"
+
+        done < images.txt
+
+        echo "Mirroring complete!"
