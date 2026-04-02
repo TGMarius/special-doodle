@@ -62,7 +62,7 @@ jobs:
             continue
           fi
 
-          DEST="ghcr.io/mariusgt/mirror/${NAME}:${TAG}"
+          DEST="ghcr.io/tgmarius/mirror/${NAME}:${TAG}"
           echo "DEST: '$DEST'"
 
           echo "Pulling $SRC..."
