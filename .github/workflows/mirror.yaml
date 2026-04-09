@@ -1,39 +1,81 @@
-- name: Mirror images per environment
+name: Mirror Images to GHCR
+
+on:
+  push:
+    paths:
+      - images/**
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
         shell: bash
         run: |
-          set -e
+          echo "${{ secrets.GHCR_PAT }}" \
+            | docker login ghcr.io \
+              -u "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Mirror images per environment
+        shell: bash
+        run: |
+          set -euo pipefail
 
           echo "Detecting changed image files..."
 
-          if [ -z "${{ github.event.before }}" ]; then
-            echo "No 'before' SHA detected; using last commit range."
+          # Determine which files changed safely
+          if [ -z "${{ github.event.before }}" ] || [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "No valid 'before' SHA detected; using last commit only."
             CHANGED_FILES="$(git diff --name-only HEAD^ HEAD || true)"
           else
             CHANGED_FILES="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")"
           fi
 
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed files detected. Exiting."
+            exit 0
+          fi
+
           for FILE in $CHANGED_FILES; do
-            if [[ "$FILE" != images/*.txt ]]; then
-              continue
-            fi
+            case "$FILE" in
+              images/*.txt)
+                ;;
+              *)
+                continue
+                ;;
+            esac
 
             ENVIRONMENT="$(basename "$FILE" .txt)"
+            OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+
             echo ""
             echo "======================================"
-            echo "Processing environment: $ENVIRONMENT"
-            echo "Image file: $FILE"
+            echo "Environment : $ENVIRONMENT"
+            echo "Image file  : $FILE"
             echo "======================================"
 
-            while IFS= read -r SRC || [ -n "$SRC" ]; do
+            while IFS= read -r LINE || [ -n "$LINE" ]; do
+              RAW_LINE="$LINE"
 
-              RAW_LINE="$SRC"
+              # Skip empty / whitespace-only lines
               CLEANED="$(echo "$RAW_LINE" | tr -d '[:space:]')"
-
               if [ -z "$CLEANED" ]; then
                 continue
               fi
 
-              IMAGE_REF="$(echo "$RAW_LINE" | sed 's/#.*//g' | tr -d '[:space:]')"
+              # Remove inline comments
+              IMAGE_REF="$(echo "$RAW_LINE" | sed 's/#.*$//' | tr -d '[:space:]')"
+
               IMAGE_WITH_TAG="$(echo "$IMAGE_REF" | awk -F/ '{print $NF}')"
               NAME="$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)"
 
@@ -43,6 +85,7 @@
                 TAG="latest"
               fi
 
+              # Normalise tag (fix CRLF, casing issues)
               TAG="$(echo "$TAG" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
 
               if [ -z "$NAME" ] || [ -z "$TAG" ]; then
@@ -50,13 +93,19 @@
                 exit 1
               fi
 
+              # -------------------------------
+              # Floating tag detection (WARN ONLY)
+              # -------------------------------
               IS_FLOATING=false
+
               if [[ "$TAG" =~ ^latest$|^stable$|^prod$|^main$ ]]; then
                 IS_FLOATING=true
               fi
+
               if [[ "$TAG" =~ ^[0-9]+$ ]]; then
                 IS_FLOATING=true
               fi
+
               if [[ "$TAG" =~ ^[0-9]+- ]]; then
                 IS_FLOATING=true
               fi
@@ -65,13 +114,20 @@
                 echo "::warning title=Floating tag detected::[$ENVIRONMENT] Image '$IMAGE_REF' uses floating tag ('$TAG')."
               fi
 
-              DEST="ghcr.io/tgmarius/${ENVIRONMENT}/${NAME}:${TAG}"
+              DEST="ghcr.io/${OWNER}/${ENVIRONMENT}/${NAME}:${TAG}"
 
+              echo "Pulling  : $IMAGE_REF"
               docker pull "$IMAGE_REF"
+
+              echo "Tagging  : $DEST"
               docker tag "$IMAGE_REF" "$DEST"
+
+              echo "Pushing  : $DEST"
               docker push "$DEST"
 
             done < "$FILE"
+
           done
 
+          echo ""
           echo "Mirroring complete."
