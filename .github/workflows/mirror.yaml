@@ -32,7 +32,12 @@ jobs:
           set -e
 
           echo "Detecting changed image files..."
-          CHANGED_FILES=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
+          if [ -z "${{ github.event.before }}" ]; then
+            echo "No 'before' SHA detected; using last commit only."
+            CHANGED_FILES="$(git diff --name-only HEAD^ HEAD || true)"
+          else
+            CHANGED_FILES="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")"
+          fi
 
           for FILE in $CHANGED_FILES; do
             if [[ "$FILE" != images/*.txt ]]; then
