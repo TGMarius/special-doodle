@@ -1,39 +1,12 @@
-name: Mirror Images to GHCR
-
-on:
-  push:
-    paths:
-      - images/**
-  workflow_dispatch:
-
-jobs:
-  mirror:
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Login to GHCR
-        shell: bash
-        run: |
-          echo "${{ secrets.GHCR_PAT }}" \
-            | docker login ghcr.io \
-              -u "${{ github.actor }}" \
-              --password-stdin
-
-      - name: Mirror images per environment
+- name: Mirror images per environment
         shell: bash
         run: |
           set -e
 
           echo "Detecting changed image files..."
+
           if [ -z "${{ github.event.before }}" ]; then
-            echo "No 'before' SHA detected; using last commit only."
+            echo "No 'before' SHA detected; using last commit range."
             CHANGED_FILES="$(git diff --name-only HEAD^ HEAD || true)"
           else
             CHANGED_FILES="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")"
@@ -60,9 +33,7 @@ jobs:
                 continue
               fi
 
-              # Strip inline comments
               IMAGE_REF="$(echo "$RAW_LINE" | sed 's/#.*//g' | tr -d '[:space:]')"
-
               IMAGE_WITH_TAG="$(echo "$IMAGE_REF" | awk -F/ '{print $NF}')"
               NAME="$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)"
 
@@ -72,7 +43,6 @@ jobs:
                 TAG="latest"
               fi
 
-              # Normalise tag (important for CRLF files)
               TAG="$(echo "$TAG" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
 
               if [ -z "$NAME" ] || [ -z "$TAG" ]; then
@@ -80,40 +50,28 @@ jobs:
                 exit 1
               fi
 
-              # -------------------------------
-              # Floating tag detection (WARN ONLY)
-              # -------------------------------
               IS_FLOATING=false
-
               if [[ "$TAG" =~ ^latest$|^stable$|^prod$|^main$ ]]; then
                 IS_FLOATING=true
               fi
-
               if [[ "$TAG" =~ ^[0-9]+$ ]]; then
                 IS_FLOATING=true
               fi
-
               if [[ "$TAG" =~ ^[0-9]+- ]]; then
                 IS_FLOATING=true
               fi
 
               if [ "$IS_FLOATING" = true ]; then
-                echo "::warning title=Floating tag detected::[$ENVIRONMENT] Image '$IMAGE_REF' uses a floating tag ('$TAG')."
+                echo "::warning title=Floating tag detected::[$ENVIRONMENT] Image '$IMAGE_REF' uses floating tag ('$TAG')."
               fi
 
               DEST="ghcr.io/tgmarius/${ENVIRONMENT}/${NAME}:${TAG}"
 
-              echo "Pulling     : $IMAGE_REF"
               docker pull "$IMAGE_REF"
-
-              echo "Tagging as  : $DEST"
               docker tag "$IMAGE_REF" "$DEST"
-
-              echo "Pushing     : $DEST"
               docker push "$DEST"
 
             done < "$FILE"
           done
 
-          echo ""
           echo "Mirroring complete."
