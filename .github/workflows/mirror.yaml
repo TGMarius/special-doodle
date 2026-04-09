@@ -3,7 +3,7 @@ name: Mirror Images to GHCR
 on:
   push:
     paths:
-      - images/**
+      - images.txt
   workflow_dispatch:
 
 jobs:
@@ -15,7 +15,7 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Login to GHCR
@@ -26,108 +26,81 @@ jobs:
               -u "${{ github.actor }}" \
               --password-stdin
 
-      - name: Mirror images per environment
+      - name: Mirror all images from images.txt
         shell: bash
         run: |
-          set -euo pipefail
+          echo "Starting mirroring"
+          echo "----"
 
-          echo "Detecting changed image files..."
+          while IFS= read -r SRC || [ -n "$SRC" ]; do
 
-          # Determine which files changed safely
-          if [ -z "${{ github.event.before }}" ] || [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            echo "No valid 'before' SHA detected; using last commit only."
-            CHANGED_FILES="$(git diff --name-only HEAD^ HEAD || true)"
-          else
-            CHANGED_FILES="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")"
-          fi
+            RAW_LINE="$SRC"
+            echo "RAW LINE: '$RAW_LINE'"
 
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "No changed files detected. Exiting."
-            exit 0
-          fi
+            # Skip empty or whitespace-only lines
+            CLEANED="$(echo "$RAW_LINE" | tr -d '[:space:]')"
+            if [ -z "$CLEANED" ]; then
+              echo "Skipping blank line"
+              continue
+            fi
 
-          for FILE in $CHANGED_FILES; do
-            case "$FILE" in
-              images/*.txt)
-                ;;
-              *)
-                continue
-                ;;
-            esac
+            # Strip inline comments for parsing
+            IMAGE_REF="$(echo "$RAW_LINE" | sed 's/#.*//g' | tr -d '[:space:]')"
 
-            ENVIRONMENT="$(basename "$FILE" .txt)"
-            OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+            # Extract last segment (e.g. nginx:latest)
+            IMAGE_WITH_TAG="$(echo "$IMAGE_REF" | awk -F/ '{print $NF}')"
+            NAME="$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)"
 
-            echo ""
-            echo "======================================"
-            echo "Environment : $ENVIRONMENT"
-            echo "Image file  : $FILE"
-            echo "======================================"
+            if [[ "$IMAGE_WITH_TAG" == *:* ]]; then
+              TAG="$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)"
+            else
+              TAG="latest"
+            fi
 
-            while IFS= read -r LINE || [ -n "$LINE" ]; do
-              RAW_LINE="$LINE"
+            if [ -z "$NAME" ] || [ -z "$TAG" ]; then
+              echo "ERROR: Invalid image reference: $RAW_LINE"
+              exit 1
+            fi
 
-              # Skip empty / whitespace-only lines
-              CLEANED="$(echo "$RAW_LINE" | tr -d '[:space:]')"
-              if [ -z "$CLEANED" ]; then
-                continue
-              fi
+            # -------------------------------
+            # Floating tag detection (WARN ONLY)
+            # -------------------------------
+            IS_FLOATING=false
 
-              # Remove inline comments
-              IMAGE_REF="$(echo "$RAW_LINE" | sed 's/#.*$//' | tr -d '[:space:]')"
+            # Common floating tags
+            if [[ "$TAG" =~ ^latest$|^stable$|^prod$|^main$ ]]; then
+              IS_FLOATING=true
+            fi
 
-              IMAGE_WITH_TAG="$(echo "$IMAGE_REF" | awk -F/ '{print $NF}')"
-              NAME="$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)"
+            # Major-only versions like "7"
+            if [[ "$TAG" =~ ^[0-9]+$ ]]; then
+              IS_FLOATING=true
+            fi
 
-              if [[ "$IMAGE_WITH_TAG" == *:* ]]; then
-                TAG="$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)"
-              else
-                TAG="latest"
-              fi
+            # Major + suffix like "7-alpine"
+            if [[ "$TAG" =~ ^[0-9]+- ]]; then
+              IS_FLOATING=true
+            fi
 
-              # Normalise tag (fix CRLF, casing issues)
-              TAG="$(echo "$TAG" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            if [ "$IS_FLOATING" = true ]; then
+              echo "::warning title=Floating tag detected::Image '$IMAGE_REF' uses a floating tag ('$TAG'). Consider pinning to a specific version or digest."
+            fi
 
-              if [ -z "$NAME" ] || [ -z "$TAG" ]; then
-                echo "ERROR: Invalid image reference: $RAW_LINE"
-                exit 1
-              fi
+            DEST="ghcr.io/tgmarius/mirror/${NAME}:${TAG}"
+            echo "DEST: '$DEST'"
 
-              # -------------------------------
-              # Floating tag detection (WARN ONLY)
-              # -------------------------------
-              IS_FLOATING=false
+            echo "Pulling $IMAGE_REF..."
+            docker pull "$IMAGE_REF"
 
-              if [[ "$TAG" =~ ^latest$|^stable$|^prod$|^main$ ]]; then
-                IS_FLOATING=true
-              fi
+            echo "Tagging as $DEST..."
+            docker tag "$IMAGE_REF" "$DEST"
 
-              if [[ "$TAG" =~ ^[0-9]+$ ]]; then
-                IS_FLOATING=true
-              fi
+            echo "Pushing to GHCR..."
+            docker push "$DEST"
 
-              if [[ "$TAG" =~ ^[0-9]+- ]]; then
-                IS_FLOATING=true
-              fi
+            echo "Done processing $IMAGE_REF"
+            echo "----"
 
-              if [ "$IS_FLOATING" = true ]; then
-                echo "::warning title=Floating tag detected::[$ENVIRONMENT] Image '$IMAGE_REF' uses floating tag ('$TAG')."
-              fi
+          done < images.txt
 
-              DEST="ghcr.io/${OWNER}/${ENVIRONMENT}/${NAME}:${TAG}"
-
-              echo "Pulling  : $IMAGE_REF"
-              docker pull "$IMAGE_REF"
-
-              echo "Tagging  : $DEST"
-              docker tag "$IMAGE_REF" "$DEST"
-
-              echo "Pushing  : $DEST"
-              docker push "$DEST"
-
-            done < "$FILE"
-
-          done
-
-          echo ""
-          echo "Mirroring complete."
+          echo "Mirroring complete!"
