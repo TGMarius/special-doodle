@@ -86,7 +86,7 @@ jobs:
               echo "::warning title=Floating tag detected::Image '$IMAGE_REF' uses a floating tag ('$TAG'). Consider pinning to a specific version or digest."
             fi
 
-            DEST="ghcr.io/org/platform/${NAME}:${TAG}"
+            DEST="ghcr.io/tgmarius/mirror/${NAME}:${TAG}"
             echo "DEST: '$DEST'"
 
             echo "Pulling $IMAGE_REF..."
