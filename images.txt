@@ -20,7 +20,10 @@ xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.6.0
 xpkg.upbound.io/upbound/provider-aws-iam:v2.3.0
 xpkg.upbound.io/upbound/provider-family-aws:v2.3.0
 
-
+registry.k8s.io/external-dns/external-dns:v0.20.0
+registry.k8s.io/metrics-server/metrics-server:v0.8.0
+velero/velero-plugin-for-aws:v1.13.2
+velero/velero:v1.17.1
 alpine:3.22.0
 alpine/psql:18.2
 busybox:1.36
