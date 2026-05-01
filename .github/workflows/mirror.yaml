@@ -1,4 +1,4 @@
-name: Mirror Images to GHCR
+name: Mirror Images to GHCR (Org Style)
 
 on:
   push:
@@ -26,71 +26,47 @@ jobs:
               -u "${{ github.actor }}" \
               --password-stdin
 
-      - name: Mirror all images from images.txt
+      - name: Mirror all images from images.txt (org-style)
         shell: bash
         run: |
-          echo "Starting mirroring"
+          set -euo pipefail
+
+          echo "Starting org-style mirroring"
           echo "----"
 
-          while IFS= read -r SRC || [ -n "$SRC" ]; do
-
-            RAW_LINE="$SRC"
+          while IFS= read -r RAW_LINE || [ -n "$RAW_LINE" ]; do
             echo "RAW LINE: '$RAW_LINE'"
 
-            # Skip empty or whitespace-only lines
-            CLEANED="$(echo "$RAW_LINE" | tr -d '[:space:]')"
-            if [ -z "$CLEANED" ]; then
-              echo "Skipping blank line"
-              continue
-            fi
-
-            # Strip inline comments for parsing
+            # Strip comments + whitespace
             IMAGE_REF="$(echo "$RAW_LINE" | sed 's/#.*//g' | tr -d '[:space:]')"
 
-            # Extract last segment (e.g. nginx:latest)
-            IMAGE_WITH_TAG="$(echo "$IMAGE_REF" | awk -F/ '{print $NF}')"
-            NAME="$(echo "$IMAGE_WITH_TAG" | cut -d: -f1)"
-
-            if [[ "$IMAGE_WITH_TAG" == *:* ]]; then
-              TAG="$(echo "$IMAGE_WITH_TAG" | cut -d: -f2)"
-            else
-              TAG="latest"
-            fi
-
-            if [ -z "$NAME" ] || [ -z "$TAG" ]; then
-              echo "ERROR: Invalid image reference: $RAW_LINE"
-              exit 1
-            fi
-
-            # -------------------------------
-            # Floating tag detection (WARN ONLY)
-            # -------------------------------
-            IS_FLOATING=false
-
-            # Common floating tags
-            if [[ "$TAG" =~ ^latest$|^stable$|^prod$|^main$ ]]; then
-              IS_FLOATING=true
-            fi
-
-            # Major-only versions like "7"
-            if [[ "$TAG" =~ ^[0-9]+$ ]]; then
-              IS_FLOATING=true
-            fi
-
-            # Major + suffix like "7-alpine"
-            if [[ "$TAG" =~ ^[0-9]+- ]]; then
-              IS_FLOATING=true
-            fi
-
-            if [ "$IS_FLOATING" = true ]; then
-              echo "::warning title=Floating tag detected::Image '$IMAGE_REF' uses a floating tag ('$TAG'). Consider pinning to a specific version or digest."
-            fi
-
-            DEST="ghcr.io/tgmarius/mirror/${NAME}:${TAG}"
-            echo "DEST: '$DEST'"
+            [ -z "$IMAGE_REF" ] && echo "Skipping blank line" && continue
 
             echo "Pulling $IMAGE_REF..."
             docker pull "$IMAGE_REF"
+
+            # Extract repo path (without registry and tag)
+            IMAGE_NO_TAG="${IMAGE_REF%%:*}"
+
+            if [[ "$IMAGE_NO_TAG" == */* ]]; then
+              IMAGE_PATH="${IMAGE_NO_TAG#*/}"
+            else
+              IMAGE_PATH="$IMAGE_NO_TAG"
+            fi
+
+            # Get immutable digest
+            DIGEST="$(docker inspect \
+              --format='{{index .RepoDigests 0}}' \
+              "$IMAGE_REF")"
+
+            SHA="${DIGEST##*@sha256:}"
+
+            if [ -z "$SHA" ]; then
+              echo "ERROR: Failed to resolve digest for $IMAGE_REF"
+              exit 1
+            fi
+
+            DEST="ghcr.io/tgmarius/mirror/${IMAGE_PATH}:${SHA}"
 
             echo "Tagging as $DEST..."
             docker tag "$IMAGE_REF" "$DEST"
