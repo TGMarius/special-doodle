@@ -1,4 +1,4 @@
-name: Mirror Images to GHCR (Org Style)
+name: Mirror public images into private GHCR
 
 on:
   push:
@@ -6,17 +6,20 @@ on:
       - images.txt
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   mirror:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
         shell: bash
@@ -26,57 +29,45 @@ jobs:
               -u "${{ github.actor }}" \
               --password-stdin
 
-      - name: Mirror all images from images.txt (org-style)
+      - name: Mirror images to GHCR (private)
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Starting org-style mirroring"
+          ORG="tgmarius"
+          PREFIX="mirror"
+
+          echo "Starting GHCR mirroring"
           echo "----"
 
           while IFS= read -r RAW_LINE || [ -n "$RAW_LINE" ]; do
-            echo "RAW LINE: '$RAW_LINE'"
+            IMAGE="$(echo "$RAW_LINE" | sed 's/#.*//g' | tr -d '[:space:]')"
+            [ -z "$IMAGE" ] && continue
 
-            # Strip comments + whitespace
-            IMAGE_REF="$(echo "$RAW_LINE" | sed 's/#.*//g' | tr -d '[:space:]')"
+            echo "Processing: $IMAGE"
 
-            [ -z "$IMAGE_REF" ] && echo "Skipping blank line" && continue
+            # Split image and tag
+            IMAGE_NAME="${IMAGE%%:*}"
+            TAG="${IMAGE##*:}"
 
-            echo "Pulling $IMAGE_REF..."
-            docker pull "$IMAGE_REF"
-
-            # Extract repo path (without registry and tag)
-            IMAGE_NO_TAG="${IMAGE_REF%%:*}"
-
-            if [[ "$IMAGE_NO_TAG" == */* ]]; then
-              IMAGE_PATH="${IMAGE_NO_TAG#*/}"
+            # Remove registry if present
+            if [[ "$IMAGE_NAME" == */* ]]; then
+              IMAGE_PATH="${IMAGE_NAME#*/}"
             else
-              IMAGE_PATH="$IMAGE_NO_TAG"
+              IMAGE_PATH="$IMAGE_NAME"
             fi
 
-            # Get immutable digest
-            DIGEST="$(docker inspect \
-              --format='{{index .RepoDigests 0}}' \
-              "$IMAGE_REF")"
+            DEST="ghcr.io/${ORG}/${PREFIX}/${IMAGE_PATH}:${TAG}"
 
-            SHA="${DIGEST##*@sha256:}"
+            echo "→ Mirroring to $DEST"
 
-            if [ -z "$SHA" ]; then
-              echo "ERROR: Failed to resolve digest for $IMAGE_REF"
-              exit 1
-            fi
+            docker buildx imagetools create \
+              --tag "$DEST" \
+              "$IMAGE"
 
-            DEST="ghcr.io/tgmarius/mirror/${IMAGE_PATH}:${SHA}"
-
-            echo "Tagging as $DEST..."
-            docker tag "$IMAGE_REF" "$DEST"
-
-            echo "Pushing to GHCR..."
-            docker push "$DEST"
-
-            echo "Done processing $IMAGE_REF"
+            echo "Done"
             echo "----"
 
           done < images.txt
 
-          echo "Mirroring complete!"
+          echo "All images mirrored successfully"
