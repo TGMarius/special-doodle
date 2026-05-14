@@ -1,7 +1,7 @@
 datadoghq.azurecr.io/agent:7.73.0
-datadoghq.azurecr.io/agent:7.75.0
-datadoghq.azurecr.io/apm-inject:0
-datadoghq.azurecr.io/cluster-agent:7.75.0
-datadoghq.azurecr.io/dd-lib-dotnet-init:3
-datadoghq.azurecr.io/dd-lib-java-init:1
-datadoghq.azurecr.io/dd-lib-js-init:5
+#datadoghq.azurecr.io/agent:7.75.0
+#datadoghq.azurecr.io/apm-inject:0
+#datadoghq.azurecr.io/cluster-agent:7.75.0
+#datadoghq.azurecr.io/dd-lib-dotnet-init:3
+#datadoghq.azurecr.io/dd-lib-java-init:1
+#datadoghq.azurecr.io/dd-lib-js-init:5
