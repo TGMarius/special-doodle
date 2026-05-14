@@ -29,8 +29,14 @@ jobs:
               -u "${{ github.actor }}" \
               --password-stdin
 
-      - name: Mirror images to GHCR (private)
+
+      - name: Mirror images to GHCR (private or dry-run)
         shell: bash
         run: |
           echo "Starting org-style mirroring"
-          ./scripts/image-mirroring.sh
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Dry run: not pushing images, just simulating."
+            DRY_RUN=1 ./scripts/image-mirroring.sh
+          else
+            ./scripts/image-mirroring.sh
+          fi
